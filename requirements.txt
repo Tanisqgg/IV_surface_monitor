@@ -1,0 +1,8 @@
+python-dotenv
+requests
+pandas
+numpy
+plotly
+pyarrow
+scipy
+dash
