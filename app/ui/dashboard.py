@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import glob
 import numpy as np
 import pandas as pd
@@ -234,5 +235,7 @@ def update_all(path, expiry, method):
     )
 
 
+
 if __name__ == "__main__":
-    app.run(debug=True, host="127.0.0.1", port=8050)
+    port = int(os.getenv("PORT", "8050"))   # Render sets PORT
+    app.run(debug=False, host="0.0.0.0", port=port)
