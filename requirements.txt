@@ -1,6 +1,8 @@
-dash
-plotly
-numpy
-pandas
-requests
 python-dotenv
+requests
+pandas
+numpy
+plotly
+pyarrow
+scipy
+dash

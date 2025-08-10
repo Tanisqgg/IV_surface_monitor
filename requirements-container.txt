@@ -1,7 +1,0 @@
-dash
-plotly
-numpy
-pandas
-requests
-python-dotenv
-gunicorn
