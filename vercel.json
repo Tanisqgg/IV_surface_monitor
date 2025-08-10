@@ -5,6 +5,6 @@
       "excludeFiles": "app/data/**"
     }
   },
-  "builds": [{ "src": "app/index.py", "use": "@vercel/python" }],
+
   "routes": [{ "src": "/(.*)", "dest": "app/index.py" }]
 }
