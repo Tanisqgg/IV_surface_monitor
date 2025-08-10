@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from typing import Tuple
 from scipy.optimize import minimize
 
+try:
+    from scipy.optimize import minimize  # optional
+except Exception:  # no SciPy on Vercel
+    minimize = None
+
 # Raw SVI (Gatheral) on total variance w = sigma^2 * T
 def svi_w(k, a, b, rho, m, s):
     # s for "sigma" param (often called 'sigma' in SVI papers; renamed to s to avoid confusion)
@@ -33,13 +38,21 @@ def _init_guess(k: np.ndarray, w: np.ndarray) -> Tuple[float,float,float,float,f
     s0 = max(1e-3, kstd)
     return a0, b0, rho0, m0, s0
 
-def fit_svi_smile(k: np.ndarray, w: np.ndarray) -> SVIParams:
-    # Clean
-    mask = np.isfinite(k) & np.isfinite(w)
-    k = k[mask]; w = w[mask]
-    n = len(k)
-    if n < 6:
-        return SVIParams(0,0,0,0,0,False,n,1e9)
+    def fit_svi_smile(k, w):
+        if minimize is None:
+            from dataclasses import dataclass
+            @dataclass
+            class SVIParams:
+                a: float = 0;
+                b: float = 0;
+                rho: float = 0;
+                m: float = 0;
+                s: float = 0
+                ok: bool = False;
+                n: int = len(k);
+                loss: float = 1e9
+
+            return SVIParams(ok=False, n=len(k), loss=1e9)
 
     a0,b0,rho0,m0,s0 = _init_guess(k,w)
 

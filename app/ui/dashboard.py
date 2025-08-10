@@ -13,6 +13,17 @@ from app.anomaly import calendar_violations, convexity_violations
 from app.svi import fit_svi_smile, evaluate_svi_iv_on_grid
 from app.usage import used_today, left_today, DAILY_LIMIT
 
+try:
+    from scipy.optimize import minimize as _scipy_min
+
+    HAS_SCI = True
+except Exception:
+    HAS_SCI = False
+
+# in the Surface Method radio options:
+options = [
+              {"label": "Raw (interp)", "value": "interp"},
+          ] + ([{"label": "SVI (fitted)", "value": "svi"}] if HAS_SCI else [])
 
 DATA_DIR = Path("app/data")
 

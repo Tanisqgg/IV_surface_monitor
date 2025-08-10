@@ -4,6 +4,6 @@ from pathlib import Path
 
 def read_table(path):
     p = Path(path)
-    if p.suffix.lower() == ".csv":
+    if p.suffix.lower() == ".csv" or os.getenv("VERCEL"):
         return pd.read_csv(p)
-    return pd.read_parquet(p)  # falls back to parquet when running locally
+    return pd.read_parquet(p)

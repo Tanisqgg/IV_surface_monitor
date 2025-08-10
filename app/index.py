@@ -1,4 +1,3 @@
-# app/index.py
 # Exposes a WSGI callable for Vercel from your existing Dash app.
 from app.ui.dashboard import app as dash_app
 
