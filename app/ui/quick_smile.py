@@ -1,4 +1,3 @@
-# app/ui/quick_smile.py
 import argparse
 from pathlib import Path
 import plotly.express as px

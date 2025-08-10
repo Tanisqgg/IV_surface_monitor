@@ -2,18 +2,9 @@ import os, json, requests, datetime as dt
 import pandas as pd
 from dotenv import load_dotenv
 from datetime import timezone
-from app.usage import log_alpha_call
 
-try:
-    from dotenv import load_dotenv  # dev only
-    load_dotenv()
-except Exception:
-    pass
-
+load_dotenv()
 API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
-if not API_KEY:
-    raise RuntimeError("Missing ALPHAVANTAGE_API_KEY")
-
 BASE = "https://www.alphavantage.co/query"
 
 def fetch_historical_chain(symbol: str, date: str|None=None) -> dict:
@@ -32,11 +23,9 @@ def fetch_historical_chain(symbol: str, date: str|None=None) -> dict:
     r = requests.get(BASE, params=params, timeout=30)
     r.raise_for_status()
     data = r.json()
+    # Basic guardrails for throttling or errors
     if "Information" in data or "Note" in data or "Error Message" in data:
-        # don't log a successful call if it failed / was rate-limited
         raise RuntimeError(f"AlphaVantage response issue: {json.dumps(data)[:400]}")
-    # success -> count it
-    log_alpha_call()
     return data
 
 def normalize_chain_json(raw: dict) -> pd.DataFrame:

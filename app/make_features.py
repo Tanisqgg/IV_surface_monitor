@@ -8,7 +8,7 @@ def main(inp_path: str):
     df = read_table(p)
     df2 = add_time_and_moneyness(df)
 
-    out = p.with_name(p.stem + "_feat" + p.suffix)  # preserves .csv or .parquet
+    out = p.with_name(p.stem + "_feat" + p.suffix)
     if out.suffix.lower() == ".csv":
         df2.to_csv(out, index=False)
     else:

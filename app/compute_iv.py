@@ -1,4 +1,3 @@
-# app/compute_iv.py
 import argparse
 from pathlib import Path
 from app.utils.io import read_table

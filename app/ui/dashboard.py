@@ -1,4 +1,3 @@
-# app/ui/dashboard.py
 from pathlib import Path
 import glob
 import numpy as np
@@ -11,24 +10,12 @@ from app.utils.io import read_table
 from app.surface import build_surface
 from app.anomaly import calendar_violations, convexity_violations
 from app.svi import fit_svi_smile, evaluate_svi_iv_on_grid
-from app.usage import used_today, left_today, DAILY_LIMIT
 
-try:
-    from scipy.optimize import minimize as _scipy_min
-
-    HAS_SCI = True
-except Exception:
-    HAS_SCI = False
-
-# in the Surface Method radio options:
-options = [
-              {"label": "Raw (interp)", "value": "interp"},
-          ] + ([{"label": "SVI (fitted)", "value": "svi"}] if HAS_SCI else [])
 
 DATA_DIR = Path("app/data")
 
 
-def latest_feat_iv() -> Path | None:
+def latest_feat_iv():
     files = sorted(glob.glob(str(DATA_DIR / "*_feat_iv.parquet"))) + \
             sorted(glob.glob(str(DATA_DIR / "*_feat_iv.csv")))
     return Path(files[-1]) if files else None
@@ -42,12 +29,12 @@ def load_df(path: Path) -> pd.DataFrame:
     return df
 
 
-def make_smile_fig(df: pd.DataFrame, expiry_date) -> go.Figure:
-    sm = df[df["expiration"] == expiry_date].sort_values("k")
+def make_smile_fig(df: pd.DataFrame, expiry: pd.Timestamp) -> go.Figure:
+    sm = df[df["expiration"] == expiry].sort_values("k")
     if sm.empty:
         return go.Figure()
     hover = [c for c in ["strike", "right", "bid", "ask", "open_interest", "T"] if c in sm.columns]
-    fig = px.scatter(sm, x="k", y="iv_est", hover_data=hover, title=f"Smile — {expiry_date}")
+    fig = px.scatter(sm, x="k", y="iv_est", hover_data=hover, title=f"Smile — {expiry}")
     fig.update_xaxes(title="log-moneyness k")
     fig.update_yaxes(title="IV")
     return fig
@@ -67,16 +54,13 @@ def make_surface_fig(k_grid: np.ndarray, T_grid: np.ndarray, IV: np.ndarray) -> 
 app = Dash(__name__)
 app.title = "IV Surface Monitor"
 
-initial_path = latest_feat_iv()
-df0 = load_df(initial_path) if initial_path else pd.DataFrame()
+initial = latest_feat_iv()
+df0 = load_df(initial) if initial else pd.DataFrame()
 expiries0 = sorted(df0["expiration"].unique()) if not df0.empty else []
 
 app.layout = html.Div(
     [
         html.H2("IV Surface Monitor (Alpha Vantage – historical)"),
-
-        # Quota banner (updates via Interval)
-        html.Div(id="quota-banner", style={"margin": "8px 0"}),
 
         html.Div(
             [
@@ -89,7 +73,7 @@ app.layout = html.Div(
                                 {"label": Path(p).name, "value": p}
                                 for p in sorted(glob.glob(str(DATA_DIR / "*_feat_iv.*")))
                             ],
-                            value=str(initial_path) if initial_path else None,
+                            value=str(initial) if initial else None,
                             style={"minWidth": "420px"},
                         ),
                     ],
@@ -121,7 +105,6 @@ app.layout = html.Div(
                     ],
                     style={"marginLeft": "20px"},
                 ),
-                # Refresh dropdown options + quota banner every minute
                 dcc.Interval(id="refresh", interval=60_000, n_intervals=0),
             ],
             style={"display": "flex", "gap": "16px", "alignItems": "end", "flexWrap": "wrap"},
@@ -157,28 +140,6 @@ app.layout = html.Div(
 )
 
 
-# --- Quota banner ---
-@app.callback(
-    Output("quota-banner", "children"),
-    Input("refresh", "n_intervals"),
-    prevent_initial_call=False,
-)
-def show_quota(_):
-    used = used_today()
-    left = left_today()
-    color = "#d9534f" if left <= 3 else ("#f0ad4e" if left <= 10 else "#5cb85c")
-    style = {
-        "padding": "8px 12px",
-        "borderRadius": "8px",
-        "background": color,
-        "color": "white",
-        "display": "inline-block",
-        "fontWeight": 600,
-    }
-    return [html.Span(f"Alpha Vantage quota: {used}/{DAILY_LIMIT} used today — {left} left", style=style)]
-
-
-# --- Keep file dropdown fresh ---
 @app.callback(
     Output("file-dd", "options"),
     Output("file-dd", "value"),
@@ -192,7 +153,6 @@ def refresh_files(_):
     return opts, val
 
 
-# --- Populate expiries for selected file ---
 @app.callback(
     Output("expiry-dd", "options"),
     Output("expiry-dd", "value"),
@@ -209,7 +169,6 @@ def set_expiries(path):
     )
 
 
-# --- Main update: smile, surface, anomalies ---
 @app.callback(
     Output("smile-fig", "figure"),
     Output("surface-fig", "figure"),
@@ -222,6 +181,7 @@ def set_expiries(path):
     Input("method-radio", "value"),
 )
 def update_all(path, expiry, method):
+    # Defaults
     empty_fig = go.Figure()
     empty_cols, empty_rows = [], []
 
@@ -234,26 +194,25 @@ def update_all(path, expiry, method):
 
     # --- Smile ---
     try:
-        exp_date = pd.to_datetime(expiry, errors="coerce").date() if expiry else df["expiration"].min()
+        exp_date = pd.to_datetime(expiry).date() if expiry else df["expiration"].min()
     except Exception:
         exp_date = df["expiration"].min()
 
     fig_smile = make_smile_fig(df, exp_date)
 
-    # If SVI, overlay fitted line
+    # If SVI, overlay line
     if method == "svi":
         sm = df[df["expiration"] == exp_date].copy()
         if not sm.empty:
             T = float(sm["T"].median())
             sm = sm[(sm["iv_est"].between(0.01, 3.0))]
-            if not sm.empty and np.isfinite(T) and T > 0:
-                k = sm["k"].to_numpy()
-                w = (sm["iv_est"].to_numpy() ** 2) * T
-                p = fit_svi_smile(k, w)
-                if p.ok:
-                    k_line = np.linspace(float(np.nanmin(k)), float(np.nanmax(k)), 200)
-                    iv_line = evaluate_svi_iv_on_grid(k_line, T, p)
-                    fig_smile.add_scatter(x=k_line, y=iv_line, mode="lines", name="SVI fit")
+            k = sm["k"].to_numpy()
+            w = (sm["iv_est"].to_numpy() ** 2) * T
+            p = fit_svi_smile(k, w)
+            if p.ok:
+                k_line = np.linspace(float(np.nanmin(k)), float(np.nanmax(k)), 200)
+                iv_line = evaluate_svi_iv_on_grid(k_line, T, p)
+                fig_smile.add_scatter(x=k_line, y=iv_line, mode="lines", name="SVI fit")
 
     # --- Surface + anomalies ---
     k_grid, T_grid, IV, W, meta = build_surface(df, n_k=61, max_exps=8, method=method)
@@ -276,5 +235,4 @@ def update_all(path, expiry, method):
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8050"))
-    app.run(debug=False, host="0.0.0.0", port=port)
+    app.run(debug=True, host="127.0.0.1", port=8050)

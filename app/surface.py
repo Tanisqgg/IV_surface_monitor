@@ -1,4 +1,3 @@
-# app/surface.py
 import numpy as np
 import pandas as pd
 from app.svi import fit_svi_smile, evaluate_svi_iv_on_grid
