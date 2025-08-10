@@ -1,5 +1,9 @@
 {
   "version": 2,
-  "builds": [{ "src": "app/index.py", "use": "@vercel/python" }],
+  "functions": {
+    "app/index.py": {
+      "excludeFiles": "app/data/**"
+    }
+  },
   "routes": [{ "src": "/(.*)", "dest": "app/index.py" }]
 }
