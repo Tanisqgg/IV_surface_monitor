@@ -1,12 +1,14 @@
 import argparse
 from pathlib import Path
 from app.utils.io import read_table
-from app.features import add_time_and_moneyness
+from app.features import add_time_and_moneyness, infer_trade_date
 
 def main(inp_path: str):
     p = Path(inp_path)
     df = read_table(p)
-    df2 = add_time_and_moneyness(df)
+    # deterministically pick the trade date
+    trade_date = infer_trade_date(df, source_path=str(p))
+    df2 = add_time_and_moneyness(df, trade_date=trade_date, source_path=str(p))
 
     out = p.with_name(p.stem + "_feat" + p.suffix)
     if out.suffix.lower() == ".csv":

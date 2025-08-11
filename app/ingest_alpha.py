@@ -2,9 +2,12 @@ import os, json, requests, datetime as dt
 import pandas as pd
 from dotenv import load_dotenv
 from datetime import timezone
+from pathlib import Path
 
 load_dotenv()
 API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
+if not API_KEY:
+    raise RuntimeError("Missing ALPHAVANTAGE_API_KEY (set it in Render → Environment).")
 BASE = "https://www.alphavantage.co/query"
 
 def fetch_historical_chain(symbol: str, date: str|None=None) -> dict:
@@ -72,8 +75,9 @@ if __name__ == "__main__":
         raise SystemExit("No contracts parsed; print raw and inspect the structure.")
     # Save for reuse to conserve your 25/day limit
     stamp = dt.datetime.now(timezone.utc).strftime("%Y%m%d")
-    out = f"data/{symbol}_chain_{stamp}.parquet"
-    os.makedirs("data", exist_ok=True)
+    DATA_DIR = Path("app/data")
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    out = DATA_DIR / f"{symbol}_chain_{stamp}.parquet"
     df.to_parquet(out, index=False)
     print(f"Saved {len(df)} rows -> {out}")
     print(df.head(10))
