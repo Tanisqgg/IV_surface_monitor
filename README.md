@@ -1,10 +1,7 @@
 # https://iv-surface-monitor.onrender.com
 # IV Surface Monitor
 
-Tools for building and monitoring option-implied volatility surfaces.  
-The project ingests historical option chains, computes implied volatility,
-constructs an IV surface, detects arbitrage anomalies, and exposes a
-Dash-based dashboard for exploration.
+IV Surface Monitor is a small quant toolkit + dashboard for options IV. It computes IV from quotes, derives moneyness and time to expiry, fits SVI or uses raw interpolation to render a 3D surface, and surfaces potential arbitrage violations like non-monotone total variance and non-convex calls. Ideal for learning, monitoring, and rapid IV diagnostics.
 
 ## Features
 - Pull historical option chains from Alpha Vantage’s **HISTORICAL_OPTIONS** endpoint.
