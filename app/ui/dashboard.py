@@ -12,7 +12,6 @@ from app.surface import build_surface
 from app.anomaly import calendar_violations, convexity_violations
 from app.svi import fit_svi_smile, evaluate_svi_iv_on_grid
 
-
 DATA_DIR = Path("app/data")
 
 
@@ -62,6 +61,29 @@ expiries0 = sorted(df0["expiration"].unique()) if not df0.empty else []
 app.layout = html.Div(
     [
         html.H2("IV Surface Monitor (Alpha Vantage – historical)"),
+
+        html.Details([
+            html.Summary("📖 How to Use", style={"cursor": "pointer", "fontWeight": "bold", "marginBottom": "8px"}),
+            html.Div([
+                html.P(
+                    "1. Wait for the page to load. If you see 'Loading…', it may take 30–60 seconds for the server to start."),
+                html.P("2. Use the 'File' dropdown to select a dataset (e.g., SPY_chain_YYYYMMDD_feat_iv.parquet)."),
+                html.P("3. Pick an 'Expiry' date to view that day's smile."),
+                html.P("4. Choose 'Surface Method':"),
+                html.Ul([
+                    html.Li("SVI (fitted) → Smooth, arbitrage-free curves."),
+                    html.Li("Raw (interp) → Straight-line interpolation between quotes."),
+                ]),
+                html.P("5. Explore the tabs:"),
+                html.Ul([
+                    html.Li("Smile → 2D plot of IV vs log-moneyness for chosen expiry."),
+                    html.Li("Surface → 3D IV surface across expiries."),
+                    html.Li("Anomalies → Tables of calendar/convexity violations."),
+                ]),
+                html.P(
+                    "💡 Tip: Hover over points to see strike, type (C/P), bid/ask, and open interest. Drag/zoom in 3D surface."),
+            ], style={"fontSize": "14px", "lineHeight": "1.4em"})
+        ], open=False),
 
         html.Div(
             [
@@ -235,7 +257,6 @@ def update_all(path, expiry, method):
     )
 
 
-
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8050"))   # Render sets PORT
+    port = int(os.getenv("PORT", "8050"))  # Render sets PORT
     app.run(debug=False, host="0.0.0.0", port=port)
