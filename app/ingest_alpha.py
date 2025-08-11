@@ -1,4 +1,4 @@
-import os, json, requests, datetime as dt
+import os, json, requests, datetime as dt, re
 import pandas as pd
 from dotenv import load_dotenv
 from datetime import timezone
@@ -6,29 +6,31 @@ from pathlib import Path
 
 load_dotenv()
 API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
-if not API_KEY:
-    raise RuntimeError("Missing ALPHAVANTAGE_API_KEY (set it in Render → Environment).")
 BASE = "https://www.alphavantage.co/query"
 
+def _clean_alpha_msg(msg: str) -> str:
+    """Remove any API key fragments from provider messages."""
+    if not isinstance(msg, str):
+        return "Provider error"
+    # redact “API key as ABC123...” and any long A-Z0-9 runs
+    msg = re.sub(r"(API key as )\w+", r"\1[REDACTED]", msg)
+    msg = re.sub(r"[A-Z0-9]{8,}", "[REDACTED]", msg)
+    return msg
+
 def fetch_historical_chain(symbol: str, date: str|None=None) -> dict:
-    """
-    Alpha Vantage HISTORICAL_OPTIONS:
-      - previous trading session if date is None
-      - returns IV and Greeks per contract
-    """
-    params = {
-        "function": "HISTORICAL_OPTIONS",
-        "symbol": symbol,
-        "apikey": API_KEY
-    }
-    if date:  # YYYY-MM-DD
+    params = {"function": "HISTORICAL_OPTIONS", "symbol": symbol, "apikey": API_KEY}
+    if date:
         params["date"] = date
     r = requests.get(BASE, params=params, timeout=30)
     r.raise_for_status()
     data = r.json()
-    # Basic guardrails for throttling or errors
-    if "Information" in data or "Note" in data or "Error Message" in data:
-        raise RuntimeError(f"AlphaVantage response issue: {json.dumps(data)[:400]}")
+
+    # AlphaVantage puts key in their error text; never bubble it up.
+    if any(k in data for k in ("Information", "Note", "Error Message")):
+        note = data.get("Note") or data.get("Information") or data.get("Error Message") or ""
+        safe = _clean_alpha_msg(note)
+        raise RuntimeError(f"AlphaVantage error: {safe}")
+
     return data
 
 def normalize_chain_json(raw: dict) -> pd.DataFrame:
