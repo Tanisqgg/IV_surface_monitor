@@ -1,6 +1,5 @@
 from pathlib import Path
-import os
-import glob
+import os, glob, time, datetime as dt, threading
 import numpy as np
 import pandas as pd
 import dash
@@ -12,8 +11,10 @@ from app.utils.io import read_table
 from app.surface import build_surface
 from app.anomaly import calendar_violations, convexity_violations
 from app.svi import fit_svi_smile, evaluate_svi_iv_on_grid
+from app.daily_refresh import run as run_refresh  # <-- NEW
 
-DATA_DIR = Path("app/data")
+# Allow override via env (Render disk mount)
+DATA_DIR = Path(os.environ.get("DATA_DIR", "app/data"))
 
 # -----------------------------
 # Data helpers
@@ -25,16 +26,26 @@ def latest_feat_iv():
 
 def load_df(path: Path) -> pd.DataFrame:
     df = read_table(path)
-    # keep reasonable rows
     if "iv_est" in df.columns:
         df = df[(df["T"] > 1e-6) & df["iv_est"].between(0.01, 5.0)].copy()
     if "expiration" in df.columns:
         df["expiration"] = pd.to_datetime(df["expiration"]).dt.date
-    # normalize helpers
     for c in ("open_interest", "volume"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
+
+def last_updated_str() -> str:
+    p = latest_feat_iv()
+    if not p:
+        return "Last updated: —"
+    ts = dt.datetime.utcfromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M UTC")
+    return f"Last updated: {ts}  •  {p.name}"
+
+def has_today_file(symbol: str = None) -> bool:
+    symbol = symbol or os.getenv("SYMBOL", "SPY")
+    today = dt.datetime.utcnow().strftime("%Y%m%d")
+    return (DATA_DIR / f"{symbol}_chain_{today}_feat_iv.parquet").exists()
 
 # -----------------------------
 # Figure helpers
@@ -105,6 +116,20 @@ initial = latest_feat_iv()
 df0 = load_df(initial) if initial else pd.DataFrame()
 expiries0 = sorted(df0["expiration"].unique()) if not df0.empty else []
 
+# Top bar with sidebar toggle + last updated + manual refresh
+topbar = html.Div(
+    [
+        html.Button("Hide sidebar", id="toggle-sidebar", n_clicks=0),
+        html.Div(id="last-updated", style={"fontSize": "12px", "opacity": 0.8}),
+        html.Button("Refresh now", id="refresh-now", n_clicks=0, style={"marginLeft": "8px"}),
+        html.Span(id="refresh-status", style={"fontSize": "12px", "opacity": 0.8, "marginLeft": "6px"}),
+        dcc.Interval(id="tick-last", interval=60_000, n_intervals=0),
+    ],
+    style={"display": "flex", "gap": "10px", "alignItems": "center",
+           "padding": "8px 12px", "borderBottom": "1px solid #eee",
+           "position": "sticky", "top": 0, "background": "#fff", "zIndex": 999}
+)
+
 # Sidebar: How to Use
 howto_panel = html.Div(
     [
@@ -127,11 +152,23 @@ howto_panel = html.Div(
     }
 )
 
-# Sidebar controls (with trader QoL)
+SIDEBAR_OPEN_STYLE = {
+    "width": "320px",
+    "padding": "14px",
+    "borderRight": "1px solid #eee",
+    "position": "sticky",
+    "top": 0,
+    "height": "100vh",
+    "overflowY": "auto",
+    "background": "#fafafa",
+    "fontFamily": "Inter, system-ui, sans-serif",
+}
+SIDEBAR_CLOSED_STYLE = {"display": "none"}
+
+# Sidebar controls
 sidebar = html.Div(
     [
         howto_panel,
-
         html.H3("IV Surface Monitor", style={"marginBottom": "4px"}),
         html.Div("Alpha Vantage — historical", style={"opacity": 0.7, "fontSize": "12px"}),
         html.Hr(),
@@ -183,7 +220,6 @@ sidebar = html.Div(
                        tooltip={"placement": "bottom", "always_visible": False}),
         ], style={"marginBottom": "8px"}),
 
-        # Quick actions
         html.Div([
             html.Button("ATM (k=0)", id="atm-btn", n_clicks=0, style={"marginRight": "6px"}),
             html.Button("OTM wings", id="wings-btn", n_clicks=0, style={"marginRight": "6px"}),
@@ -206,10 +242,7 @@ sidebar = html.Div(
         html.Label("Surface view"),
         dcc.RadioItems(
             id="surface-mode",
-            options=[
-                {"label": "3D", "value": "3d"},
-                {"label": "Heatmap", "value": "heatmap"},
-            ],
+            options=[{"label": "3D", "value": "3d"}, {"label": "Heatmap", "value": "heatmap"}],
             value="3d",
         ),
         html.Br(),
@@ -230,7 +263,6 @@ sidebar = html.Div(
         dcc.Interval(id="refresh", interval=60_000, n_intervals=0),
         html.Hr(),
 
-        # Downloads
         html.Div([
             html.Button("Download calendar CSV", id="dl-cal-btn"),
             dcc.Download(id="dl-cal"),
@@ -244,17 +276,8 @@ sidebar = html.Div(
             dcc.Download(id="dl-smile"),
         ]),
     ],
-    style={
-        "width": "320px",
-        "padding": "14px",
-        "borderRight": "1px solid #eee",
-        "position": "sticky",
-        "top": 0,
-        "height": "100vh",
-        "overflowY": "auto",
-        "background": "#fafafa",
-        "fontFamily": "Inter, system-ui, sans-serif",
-    },
+    id="sidebar",
+    style=SIDEBAR_OPEN_STYLE,
 )
 
 # Main content
@@ -314,8 +337,10 @@ content = html.Div(
     style={"padding": "12px", "flex": 1, "minWidth": 0},
 )
 
-app_layout = html.Div([sidebar, content], style={"display": "flex", "gap": "0"})
-app.layout = app_layout
+# Whole app layout
+app.layout = html.Div(
+    [topbar, html.Div([sidebar, content], style={"display": "flex", "gap": "0"})]
+)
 
 # -----------------------------
 # Callbacks
@@ -347,7 +372,7 @@ def set_expiries(path):
         (str(exps[0]) if exps else None),
     )
 
-# Quick actions -> update filter widgets
+# Sidebar quick actions
 @app.callback(
     Output("k-slider", "value"),
     Output("k-range", "value"),
@@ -372,9 +397,9 @@ def quick_actions(n_atm, n_wings, n_reset, k_val, k_rng, rights, iv_rng, oi_min,
         return 0.0, k_rng, rights, iv_rng, oi_min, vol_min
     if trig == "wings-btn":
         return k_val, [-1.0, -0.20] if k_val < 0 else [0.20, 1.0], rights, iv_rng, oi_min, vol_min
-    # reset
     return 0.0, [-0.5, 0.5], ["C", "P"], [0.05, 2.0], 0, 0
 
+# Main update
 @app.callback(
     Output("smile-fig", "figure"),
     Output("surface-fig", "figure"),
@@ -398,7 +423,6 @@ def quick_actions(n_atm, n_wings, n_reset, k_val, k_rng, rights, iv_rng, oi_min,
 )
 def update_all(path, expiry, method, surface_mode, k_star,
                rights, k_rng, iv_rng, oi_min, vol_min, svi_toggle):
-    # Defaults
     empty_fig = go.Figure()
     empty_cols, empty_rows = [], []
     k_readout = f"k = {float(k_star or 0.0):.3f}"
@@ -410,7 +434,6 @@ def update_all(path, expiry, method, surface_mode, k_star,
     if df.empty:
         return empty_fig, empty_fig, empty_fig, empty_rows, empty_cols, empty_rows, empty_cols, k_readout
 
-    # Parse inputs
     rights = set(rights or ["C", "P"])
     k_lo, k_hi = (k_rng or [-1.0, 1.0])
     iv_lo, iv_hi = (iv_rng or [0.01, 3.0])
@@ -418,7 +441,6 @@ def update_all(path, expiry, method, surface_mode, k_star,
     vol_min = int(vol_min or 0)
     show_svi = ("on" in (svi_toggle or []))
 
-    # Apply filters for plotting
     df_plot = df.copy()
     if "right" in df_plot.columns:
         df_plot = df_plot[df_plot["right"].isin(list(rights))]
@@ -429,15 +451,14 @@ def update_all(path, expiry, method, surface_mode, k_star,
     if "volume" in df_plot.columns:
         df_plot = df_plot[df_plot["volume"].fillna(0) >= vol_min]
 
-    # --- Smile ---
+    # Smile
     try:
         exp_date = pd.to_datetime(expiry).date() if expiry else df_plot["expiration"].min()
     except Exception:
         exp_date = df_plot["expiration"].min()
     fig_smile = make_smile_fig(df_plot, exp_date, show_svi)
 
-    # --- Surface + anomalies ---
-    # For surface stability, keep broader dataset but still respect liquidity filters
+    # Surface + anomalies (broader set but keep liquidity filters)
     df_surface = df.copy()
     if "open_interest" in df_surface.columns:
         df_surface = df_surface[df_surface["open_interest"].fillna(0) >= oi_min]
@@ -475,7 +496,7 @@ def update_all(path, expiry, method, surface_mode, k_star,
         k_readout,
     )
 
-# Downloads (CSV)
+# Downloads
 @app.callback(
     Output("dl-cal", "data"),
     Input("dl-cal-btn", "n_clicks"),
@@ -491,7 +512,6 @@ def download_calendar(n, path, method, rights, iv_rng, oi_min, vol_min):
     if not path:
         return None
     df = load_df(Path(path))
-    # Match surface filters
     if "right" in df.columns and rights:
         df = df[df["right"].isin(list(rights))]
     if "open_interest" in df.columns:
@@ -565,6 +585,61 @@ def download_smile(n, path, expiry, rights, k_rng, iv_rng, oi_min, vol_min):
         return None
     cols = [c for c in ["expiration","right","strike","k","T","iv_est","bid","ask","last","open_interest","volume","delta","gamma","theta","vega","F"] if c in df.columns]
     return dcc.send_data_frame(df[cols].to_csv, "smile.csv", index=False)
+
+# Last updated label (topbar)
+@app.callback(Output("last-updated", "children"), Input("tick-last", "n_intervals"))
+def show_last_updated(_):
+    return last_updated_str()
+
+# Manual refresh button
+@app.callback(Output("refresh-status", "children"), Input("refresh-now", "n_clicks"), prevent_initial_call=True)
+def do_refresh(_):
+    try:
+        res = run_refresh(symbol=os.getenv("SYMBOL", "SPY"))
+        return f"Refreshed • rows={res['rows']} → {Path(res['feat_iv']).name}"
+    except Exception as e:
+        return f"Refresh failed: {e}"
+
+# Sidebar toggle (based on click parity)
+@app.callback(
+    Output("sidebar", "style"),
+    Output("toggle-sidebar", "children"),
+    Input("toggle-sidebar", "n_clicks"),
+    prevent_initial_call=False,
+)
+def toggle_sidebar(n):
+    open_state = ((n or 0) % 2 == 0)
+    return (SIDEBAR_OPEN_STYLE if open_state else SIDEBAR_CLOSED_STYLE,
+            "Hide sidebar" if open_state else "Show sidebar")
+
+# -----------------------------
+# Background scheduler
+# -----------------------------
+def _background_scheduler():
+    symbol = os.getenv("SYMBOL", "SPY")
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        if not has_today_file(symbol):
+            print("[scheduler] No file for today; running initial refresh …")
+            run_refresh(symbol=symbol)
+    except Exception as e:
+        print(f"[scheduler] initial refresh failed: {e}")
+
+    while True:
+        try:
+            now = dt.datetime.utcnow()
+            target = now.replace(hour=22, minute=5, second=0, microsecond=0)
+            if target <= now:
+                target += dt.timedelta(days=1)
+            wait = (target - now).total_seconds()
+            print(f"[scheduler] next run at {target:%Y-%m-%d %H:%M:%S} UTC (in {int(wait)}s)")
+            time.sleep(wait)
+            run_refresh(symbol=symbol)
+        except Exception as e:
+            print(f"[scheduler] refresh failed: {e}")
+            time.sleep(600)
+
+threading.Thread(target=_background_scheduler, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8050"))  # Render sets PORT

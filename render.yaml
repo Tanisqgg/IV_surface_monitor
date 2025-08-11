@@ -2,19 +2,17 @@ services:
   - type: web
     name: iv-surface-monitor
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m app.dashboard
-    disk:
-      name: data
-      mountPath: /opt/render/project/src/app/data
-      sizeGB: 2
-
-  - type: cron
-    name: daily-refresh
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m app.daily_refresh
-    schedule: "0 22 * * 1-5"   # Weekdays 22:00 UTC (adjust as you like)
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python -m app.dashboard   # adjust path if your file lives elsewhere
+    autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # Optional: only if you run the AlphaVantage fetcher on this service
+      - key: ALPHAVANTAGE_API_KEY
+        sync: false
     disk:
       name: data
       mountPath: /opt/render/project/src/app/data
